@@ -44,8 +44,10 @@ public class UndertowResponse implements Response<HttpServerExchange, HttpServer
 
     @Override
     public void addHeader(String header, Object value) {
-        exchange.getResponseHeaders().add(Headers.fromCache(header), String.valueOf(value));
-        headers.add(new Header(header).set(value));
+        if (Headers.fromCache(header) != null) {
+            exchange.getResponseHeaders().add(Headers.fromCache(header), String.valueOf(value));
+            headers.add(new Header(header).set(value));
+        }
     }
 
     @Override
