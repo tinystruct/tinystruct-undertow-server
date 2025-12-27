@@ -15,12 +15,11 @@
  *******************************************************************************/
 package org.tinystruct.system;
 
-import io.undertow.Handlers;
 import io.undertow.Undertow;
 import io.undertow.server.HttpHandler;
 import io.undertow.server.HttpServerExchange;
-import io.undertow.util.HeaderMap;
 import io.undertow.util.Headers;
+import io.undertow.util.HttpString;
 import org.tinystruct.AbstractApplication;
 import org.tinystruct.ApplicationContext;
 import org.tinystruct.ApplicationException;
@@ -31,7 +30,9 @@ import org.tinystruct.system.annotation.Action;
 import org.tinystruct.system.annotation.Argument;
 import org.tinystruct.system.util.StringUtilities;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.Date;
@@ -39,9 +40,7 @@ import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static org.tinystruct.http.Constants.HTTP_REQUEST;
-import static org.tinystruct.http.Constants.HTTP_RESPONSE;
-import static org.tinystruct.http.Constants.HTTP_HOST;
+import static org.tinystruct.http.Constants.*;
 
 public class UndertowServer extends AbstractApplication implements Bootstrap {
     private final Logger logger = Logger.getLogger(UndertowServer.class.getName());
@@ -189,10 +188,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
     }
 
     @Action(value = "error", description = "Error page")
-    public Object exceptionCaught() throws ApplicationException {
-        Request<?, ?> request = (Request<?, ?>) getContext().getAttribute(HTTP_REQUEST);
-        Response<?, ?> response = (Response<?, ?>) getContext().getAttribute(HTTP_RESPONSE);
-
+    public Object exceptionCaught(Request request, Response response) throws ApplicationException {
         Reforward reforward = new Reforward(request, response);
         this.setVariable("from", reforward.getFromURL());
 
@@ -238,6 +234,42 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
         @Override
         public void handleRequest(HttpServerExchange exchange) {
             try {
+                // Handle CORS preflight (OPTIONS) requests up-front: these have no body.
+                if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod().toString())) {
+                    // CORS preflight handling with configurability
+                    String origin = exchange.getRequestHeaders().getFirst("Origin");
+                    String acrMethod = exchange.getRequestHeaders().getFirst("Access-Control-Request-Method");
+                    String acrHeaders = exchange.getRequestHeaders().getFirst("Access-Control-Request-Headers");
+
+                    // Allow origins: prefer explicit setting, otherwise echo Origin or wildcard
+                    String allowOrigin = settings.getOrDefault("cors.allowed.origins", origin != null ? origin : "*");
+                    exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Origin"), allowOrigin);
+                    // Make responses vary by Origin when echoing it
+                    if (origin != null) {
+                        exchange.getResponseHeaders().put(new HttpString("Vary"), "Origin");
+                    }
+
+                    // Allow methods: prefer configured list, otherwise echo requested or use sensible defaults
+                    String allowMethods = settings.getOrDefault("cors.allowed.methods", acrMethod != null ? acrMethod : "GET,POST,PUT,DELETE,OPTIONS");
+                    exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Methods"), allowMethods);
+
+                    // Allow headers: prefer configured list, otherwise echo requested or common headers
+                    String allowHeaders = settings.getOrDefault("cors.allowed.headers", acrHeaders != null ? acrHeaders : "Content-Type,Authorization");
+                    exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Headers"), allowHeaders);
+
+                    // Allow credentials if explicitly enabled in settings
+                    if ("true".equalsIgnoreCase(settings.get("cors.allow.credentials"))) {
+                        exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Credentials"), "true");
+                    }
+
+                    // Cache the preflight response for a configurable duration (seconds)
+                    String maxAge = settings.getOrDefault("cors.preflight.maxage", "3600");
+                    exchange.getResponseHeaders().put(new HttpString("Access-Control-Max-Age"), maxAge);
+
+                    exchange.setStatusCode(200);
+                    exchange.getResponseSender().send("");
+                    return;
+                }
                 // Serve static files first
                 if ("GET".equalsIgnoreCase(exchange.getRequestMethod().toString())) {
                     if (tryServeStatic(exchange)) {
@@ -287,7 +319,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
 
         private void handleSSE(UndertowRequest request, UndertowResponse response, Context context) throws IOException, ApplicationException {
             // Set SSE headers
-            response.addHeader(Header.CONTENT_TYPE.name(), "text/event-stream");
+            response.addHeader(Header.CONTENT_TYPE.name(), "text/event-stream; charset=utf-8");
             response.addHeader(Header.CACHE_CONTROL.name(), "no-cache");
             response.addHeader(Header.CONNECTION.name(), "keep-alive");
             response.addHeader("X-Accel-Buffering", "no");
@@ -574,3 +606,4 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
         }
     }
 }
+
