@@ -234,20 +234,25 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
         @Override
         public void handleRequest(HttpServerExchange exchange) {
             try {
+                String origin = exchange.getRequestHeaders().getFirst("Origin");
+                // Allow origins: prefer explicit setting, otherwise echo Origin or wildcard
+                String allowOrigin = settings.getOrDefault("cors.allowed.origins", origin != null ? origin : "*");
+                exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Origin"), allowOrigin);
+                // Make responses vary by Origin when echoing it
+                if (origin != null) {
+                    exchange.getResponseHeaders().put(new HttpString("Vary"), "Origin");
+                }
+
+                // Allow credentials if explicitly enabled in settings
+                if ("true".equalsIgnoreCase(settings.get("cors.allow.credentials"))) {
+                    exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Credentials"), "true");
+                }
+
                 // Handle CORS preflight (OPTIONS) requests up-front: these have no body.
                 if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod().toString())) {
                     // CORS preflight handling with configurability
-                    String origin = exchange.getRequestHeaders().getFirst("Origin");
                     String acrMethod = exchange.getRequestHeaders().getFirst("Access-Control-Request-Method");
                     String acrHeaders = exchange.getRequestHeaders().getFirst("Access-Control-Request-Headers");
-
-                    // Allow origins: prefer explicit setting, otherwise echo Origin or wildcard
-                    String allowOrigin = settings.getOrDefault("cors.allowed.origins", origin != null ? origin : "*");
-                    exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Origin"), allowOrigin);
-                    // Make responses vary by Origin when echoing it
-                    if (origin != null) {
-                        exchange.getResponseHeaders().put(new HttpString("Vary"), "Origin");
-                    }
 
                     // Allow methods: prefer configured list, otherwise echo requested or use sensible defaults
                     String allowMethods = settings.getOrDefault("cors.allowed.methods", acrMethod != null ? acrMethod : "GET,POST,PUT,DELETE,OPTIONS");
@@ -257,11 +262,6 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                     String allowHeaders = settings.getOrDefault("cors.allowed.headers", acrHeaders != null ? acrHeaders : "Content-Type,Authorization");
                     exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Headers"), allowHeaders);
 
-                    // Allow credentials if explicitly enabled in settings
-                    if ("true".equalsIgnoreCase(settings.get("cors.allow.credentials"))) {
-                        exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Credentials"), "true");
-                    }
-
                     // Cache the preflight response for a configurable duration (seconds)
                     String maxAge = settings.getOrDefault("cors.preflight.maxage", "3600");
                     exchange.getResponseHeaders().put(new HttpString("Access-Control-Max-Age"), maxAge);
@@ -270,6 +270,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                     exchange.getResponseSender().send("");
                     return;
                 }
+
                 // Serve static files first
                 if ("GET".equalsIgnoreCase(exchange.getRequestMethod().toString())) {
                     if (tryServeStatic(exchange)) {
