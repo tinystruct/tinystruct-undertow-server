@@ -6,7 +6,7 @@
     <name>undertow server module</name>
     <groupId>org.tinystruct</groupId>
     <artifactId>tinystruct-undertow-server</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.0</version>
     <description>A tinystruct-based module to enable Undertow server support.</description>
     <url>https://tinystruct.org</url>
     <licenses>
@@ -30,10 +30,10 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <undertow.version>2.3.12.Final</undertow.version>
-        <tinystruct.version>1.7.12</tinystruct.version>
+        <undertow.version>2.3.21.Final</undertow.version>
+        <tinystruct.version>1.7.17</tinystruct.version>
         <jupiter.version>6.0.1</jupiter.version>
-        <xnio.version>3.8.8.Final</xnio.version>
+        <xnio.version>3.8.14.Final</xnio.version>
         <jboss-logging.version>3.5.3.Final</jboss-logging.version>
         <maven-compiler-plugin.version>3.12.1</maven-compiler-plugin.version>
         <maven-jar-plugin.version>3.3.0</maven-jar-plugin.version>
