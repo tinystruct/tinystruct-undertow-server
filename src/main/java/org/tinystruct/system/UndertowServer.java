@@ -231,13 +231,43 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
             this.settings = settings;
         }
 
+        private String getAllowOrigin(String origin) {
+            // Get the configured allowed origins.
+            String allowedOrigins = settings.get("cors.allowed.origins");
+
+            if (allowedOrigins == null || allowedOrigins.trim().isEmpty()) {
+                return origin != null ? origin : "*";
+            }
+
+            if ("*".equals(allowedOrigins)) {
+                // If credentials are allowed, we MUST echo the origin instead of returning "*"
+                if ("true".equalsIgnoreCase(settings.get("cors.allow.credentials"))) {
+                    return origin != null ? origin : "*";
+                }
+                return "*";
+            }
+
+            if (origin != null) {
+                String[] origins = allowedOrigins.split(",");
+                for (String allowed : origins) {
+                    if (origin.equalsIgnoreCase(allowed.trim())) {
+                        return origin;
+                    }
+                }
+            }
+
+            return null;
+        }
+
         @Override
         public void handleRequest(HttpServerExchange exchange) {
             try {
                 String origin = exchange.getRequestHeaders().getFirst("Origin");
-                // Allow origins: prefer explicit setting, otherwise echo Origin or wildcard
-                String allowOrigin = settings.getOrDefault("cors.allowed.origins", origin != null ? origin : "*");
-                exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Origin"), allowOrigin);
+                String allowOrigin = getAllowOrigin(origin);
+                if (allowOrigin != null && !allowOrigin.isEmpty()) {
+                    exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Origin"), allowOrigin);
+                }
+
                 // Make responses vary by Origin when echoing it
                 if (origin != null) {
                     exchange.getResponseHeaders().put(new HttpString("Vary"), "Origin");
@@ -277,6 +307,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                         return;
                     }
                 }
+
                 if (exchange.isInIoThread()) {
                     exchange.dispatch(this);
                     return;
