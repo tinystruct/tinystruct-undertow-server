@@ -33,7 +33,7 @@ import static org.tinystruct.http.Constants.JSESSIONID;
 /**
  * Tinystruct Request adapter for Undertow HTTP Server (no servlet APIs).
  */
-public class UndertowRequest implements Request<HttpServerExchange, Object> {
+public class UndertowRequest implements Request<HttpServerExchange, InputStream> {
     private final HttpServerExchange exchange;
     private final Headers headers = new Headers();
     private final Map<String, List<String>> params = new HashMap<>();
@@ -116,17 +116,32 @@ public class UndertowRequest implements Request<HttpServerExchange, Object> {
     }
 
     @Override
-    public List<org.tinystruct.data.FileEntity> getAttachments() {
+    public List<org.tinystruct.data.FileEntity> getAttachments() throws org.tinystruct.ApplicationException {
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (contentType != null && contentType.toLowerCase().startsWith("multipart/form-data")) {
+            List<org.tinystruct.data.FileEntity> attachments = new java.util.ArrayList<>();
+            MultipartData multipartData = new MultipartData(this);
+            org.tinystruct.transfer.http.upload.ContentDisposition part;
+            while ((part = multipartData.getNextPart()) != null) {
+                if (part.getFileName() != null) {
+                    org.tinystruct.data.Attachment attachment = new org.tinystruct.data.Attachment();
+                    attachment.setFilename(part.getFileName());
+                    attachment.setContentType(part.getContentType());
+                    attachment.setContent(part.getData());
+                    attachments.add(attachment);
+                } else {
+                    params.computeIfAbsent(part.getName(), k -> new java.util.ArrayList<>()).add(new String(part.getData(), java.nio.charset.StandardCharsets.UTF_8));
+                }
+            }
+            return attachments;
+        }
         return null;
     }
 
     @Override
     public Session getSession(String id, boolean generate) {
         SessionManager manager = SessionManager.getInstance();
-        if (manager.getSession(id) == null && generate) {
-            manager.setSession(id, new MemorySession(id));
-        }
-        return manager.getSession(id);
+        return manager.getSession(id, generate);
     }
 
     @Override
@@ -165,8 +180,8 @@ public class UndertowRequest implements Request<HttpServerExchange, Object> {
     }
 
     @Override
-    public Object stream() {
-        return null;
+    public InputStream stream() {
+        return exchange.getInputStream();
     }
 
     @Override
@@ -186,7 +201,7 @@ public class UndertowRequest implements Request<HttpServerExchange, Object> {
     }
 
     @Override
-    public Request<HttpServerExchange, Object> setMethod(Method method) {
+    public Request<HttpServerExchange, InputStream> setMethod(Method method) {
         this.method = method;
         return this;
     }
@@ -197,7 +212,7 @@ public class UndertowRequest implements Request<HttpServerExchange, Object> {
     }
 
     @Override
-    public Request<HttpServerExchange, Object> setUri(String uri) {
+    public Request<HttpServerExchange, InputStream> setUri(String uri) {
         this.uri = uri;
         return this;
     }

@@ -43,6 +43,11 @@ public class UndertowResponse implements Response<HttpServerExchange, HttpServer
     }
 
     @Override
+    public void addCookie(org.tinystruct.http.Cookie cookie) {
+        addHeader(org.tinystruct.http.Header.SET_COOKIE.name(), cookie.toString());
+    }
+
+    @Override
     public void addHeader(String header, Object value) {
         if (Headers.fromCache(header) != null) {
             exchange.getResponseHeaders().add(Headers.fromCache(header), String.valueOf(value));
