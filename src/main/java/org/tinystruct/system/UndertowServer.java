@@ -29,6 +29,10 @@ import org.tinystruct.mcp.MCPPushManager;
 import org.tinystruct.system.annotation.Action;
 import org.tinystruct.system.annotation.Argument;
 import org.tinystruct.system.util.StringUtilities;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jws;
+import io.jsonwebtoken.JwtException;
+import org.tinystruct.http.security.JWTManager;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -259,6 +263,49 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
             return null;
         }
 
+        private boolean authenticateRequest(Request<?, ?> request, Context context) {
+            Object authorization;
+            if ((authorization = request.headers().get(Header.AUTHORIZATION)) != null) {
+                String authHeader = authorization.toString();
+                if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                    String token = authHeader.substring(7);
+
+                    String secret = settings.get("jwt.secret");
+                    if (secret == null || secret.trim().isEmpty()) {
+                        // jwt.secret is not configured — cannot validate Bearer token.
+                        // Log a warning and reject the request to avoid using a weak/empty key.
+                        logger.warning("jwt.secret is not configured. " +
+                                "Bearer token authentication is disabled. " +
+                                "Please set jwt.secret (>= 256-bit) in application.properties.");
+                        return false;
+                    }
+
+                    JWTManager jwtManager = new JWTManager();
+                    jwtManager.withBase64Secret(secret);
+
+                    String timezone = settings.get("jwt.timezone");
+                    if (timezone != null && !timezone.trim().isEmpty()) {
+                        try {
+                            jwtManager.withTimezone(timezone);
+                        } catch (NumberFormatException e) {
+                            logger.warning("Invalid jwt.timezone value: " + timezone);
+                        }
+                    }
+
+                    try {
+                        Jws<Claims> claims = jwtManager.parseToken(token);
+                        context.setAttribute("CLAIMS", claims);
+                        return true;
+                    } catch (JwtException e) {
+                        // Log authentication failure
+                        logger.warning("JWT validation failed: " + e.getMessage());
+                        return false;
+                    }
+                }
+            }
+            return true; // Allow requests without a token
+        }
+
         @Override
         public void handleRequest(HttpServerExchange exchange) {
             try {
@@ -285,7 +332,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                     String acrHeaders = exchange.getRequestHeaders().getFirst("Access-Control-Request-Headers");
 
                     // Allow methods: prefer configured list, otherwise echo requested or use sensible defaults
-                    String allowMethods = settings.getOrDefault("cors.allowed.methods", acrMethod != null ? acrMethod : "GET,POST,PUT,DELETE,OPTIONS");
+                    String allowMethods = settings.getOrDefault("cors.allowed.methods", acrMethod != null ? acrMethod : "GET,POST,PUT,DELETE,OPTIONS,PATCH");
                     exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Methods"), allowMethods);
 
                     // Allow headers: prefer configured list, otherwise echo requested or common headers
@@ -318,6 +365,13 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
 
                 // Set up context
                 ApplicationContext context = new ApplicationContext();
+
+                // Authenticate request
+                if (!authenticateRequest(request, context)) {
+                    sendErrorResponse(exchange, 401, "Invalid or expired token.");
+                    return;
+                }
+
                 context.setId(request.getSession().getId());
                 context.setAttribute(HTTP_REQUEST, request);
                 context.setAttribute(HTTP_RESPONSE, response);
@@ -628,6 +682,16 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
 
         private void sendErrorResponse(HttpServerExchange exchange, int statusCode, String message) {
             try {
+                String origin = exchange.getRequestHeaders().getFirst("Origin");
+                String allowOrigin = getAllowOrigin(origin);
+                if (allowOrigin != null) {
+                    exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Origin"), allowOrigin);
+                }
+
+                if (origin != null) {
+                    exchange.getResponseHeaders().put(new HttpString("Vary"), "Origin");
+                }
+
                 byte[] responseBytes = message.getBytes("UTF-8");
                 exchange.getResponseHeaders().put(Headers.CONTENT_TYPE, "text/plain; charset=UTF-8");
                 exchange.setStatusCode(statusCode);
