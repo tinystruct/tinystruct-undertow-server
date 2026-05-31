@@ -343,7 +343,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                     String maxAge = settings.getOrDefault("cors.preflight.maxage", "3600");
                     exchange.getResponseHeaders().put(new HttpString("Access-Control-Max-Age"), maxAge);
 
-                    exchange.setStatusCode(200);
+                    exchange.setStatusCode(204);
                     exchange.getResponseSender().send("");
                     return;
                 }
@@ -425,7 +425,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                 SSEPushManager pushManager = getAppropriatePushManager(isMCP);
                 response.setStatus(ResponseStatus.OK);
                 response.sendHeaders(-1);
-                SSEClient client = pushManager.register(sessionId, response);
+                pushManager.register(sessionId, response);
 
                 if (call instanceof org.tinystruct.data.component.Builder) {
                     pushManager.push(sessionId, (org.tinystruct.data.component.Builder) call);
@@ -433,22 +433,6 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                     org.tinystruct.data.component.Builder builder = new org.tinystruct.data.component.Builder();
                     builder.parse((String) call);
                     pushManager.push(sessionId, builder);
-                }
-
-                if (client != null) {
-                    try {
-                        while (client.isActive()) {
-                            Thread.sleep(1000);
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new ApplicationException("Stream interrupted: " + e.getMessage(), e);
-                    } catch (Exception e) {
-                        throw new ApplicationException("Error in stream: " + e.getMessage(), e);
-                    } finally {
-                        client.close();
-                        pushManager.remove(sessionId);
-                    }
                 }
             }
         }
