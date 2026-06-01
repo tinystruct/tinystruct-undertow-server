@@ -26,6 +26,7 @@ import org.tinystruct.ApplicationException;
 import org.tinystruct.application.Context;
 import org.tinystruct.http.*;
 import org.tinystruct.mcp.MCPPushManager;
+import org.tinystruct.mcp.MCPSpecification;
 import org.tinystruct.system.annotation.Action;
 import org.tinystruct.system.annotation.Argument;
 import org.tinystruct.system.util.StringUtilities;
@@ -324,6 +325,10 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                 if ("true".equalsIgnoreCase(settings.get("cors.allow.credentials"))) {
                     exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Credentials"), "true");
                 }
+
+                // Expose specific headers for clients to read (e.g. MCP session ID)
+                String exposeHeaders = settings.getOrDefault("cors.exposed.headers", MCPSpecification.Http.SESSION_ID + "," + MCPSpecification.Http.CONVERSATION_ID);
+                exchange.getResponseHeaders().put(new HttpString("Access-Control-Expose-Headers"), exposeHeaders);
 
                 // Handle CORS preflight (OPTIONS) requests up-front: these have no body.
                 if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod().toString())) {
