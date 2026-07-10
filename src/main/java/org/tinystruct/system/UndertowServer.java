@@ -99,6 +99,10 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
         // The port that we should run on can be set into an environment variable
         // Look for that variable and default to 8080 if it isn't there.
         int webPort = 8080;
+        if (this.settings.get("server.port") != null) {
+            webPort = Integer.parseInt(this.settings.get("server.port"));
+        }
+        
         String webHost = "localhost";
         int serverThreads = 0; // 0 means auto
 
