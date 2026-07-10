@@ -109,7 +109,7 @@ Apache License 2.0. See `LICENSE-2.0.txt`.
 <dependency>
     <groupId>org.tinystruct</groupId>
     <artifactId>tinystruct-undertow-server</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.7</version>
 </dependency>
 ```
 
