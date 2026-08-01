@@ -99,7 +99,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
         // The port that we should run on can be set into an environment variable
         // Look for that variable and default to 8080 if it isn't there.
         int webPort = 8080;
-        if (this.settings.get("server.port") != null) {
+        if (this.settings.get("server.port") != null && !this.settings.get("server.port").trim().isEmpty()) {
             webPort = Integer.parseInt(this.settings.get("server.port"));
         }
         
@@ -117,7 +117,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                 System.setProperty("https.proxyPort", getContext().getAttribute("--https.proxyPort").toString());
             }
 
-            if (getContext().getAttribute("--server-port") != null) {
+            if (getContext().getAttribute("--server-port") != null && !getContext().getAttribute("--server-port").toString().trim().isEmpty()) {
                 webPort = Integer.parseInt(getContext().getAttribute("--server-port").toString());
             }
 
@@ -125,7 +125,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                 webHost = getContext().getAttribute("--server-host").toString();
             }
 
-            if (getContext().getAttribute("--server-threads") != null) {
+            if (getContext().getAttribute("--server-threads") != null && !getContext().getAttribute("--server-threads").toString().trim().isEmpty()) {
                 serverThreads = Integer.parseInt(getContext().getAttribute("--server-threads").toString());
             }
         }
