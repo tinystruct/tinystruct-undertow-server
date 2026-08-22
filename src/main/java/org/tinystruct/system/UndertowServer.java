@@ -25,8 +25,7 @@ import org.tinystruct.ApplicationContext;
 import org.tinystruct.ApplicationException;
 import org.tinystruct.application.Context;
 import org.tinystruct.http.*;
-import org.tinystruct.mcp.MCPPushManager;
-import org.tinystruct.mcp.MCPSpecification;
+
 import org.tinystruct.system.annotation.Action;
 import org.tinystruct.system.annotation.Argument;
 import org.tinystruct.system.util.StringUtilities;
@@ -330,8 +329,8 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                     exchange.getResponseHeaders().put(new HttpString("Access-Control-Allow-Credentials"), "true");
                 }
 
-                // Expose specific headers for clients to read (e.g. MCP session ID)
-                String exposeHeaders = settings.getOrDefault("cors.exposed.headers", MCPSpecification.Http.SESSION_ID + "," + MCPSpecification.Http.CONVERSATION_ID);
+                // Expose specific response headers for clients to read (configure via cors.exposed.headers)
+                String exposeHeaders = settings.getOrDefault("cors.exposed.headers", "");
                 exchange.getResponseHeaders().put(new HttpString("Access-Control-Expose-Headers"), exposeHeaders);
 
                 // Handle CORS preflight (OPTIONS) requests up-front: these have no body.
@@ -428,9 +427,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
             return accept != null && accept.contains("text/event-stream");
         }
 
-        private SSEPushManager getAppropriatePushManager(boolean isMCP) {
-            return isMCP ? MCPPushManager.getInstance() : SSEPushManager.getInstance();
-        }
+
 
         private void handleSSE(UndertowRequest request, UndertowResponse response, Context context) throws IOException, ApplicationException {
             // Set SSE headers
@@ -440,18 +437,17 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
             response.addHeader("X-Accel-Buffering", "no");
 
             String query = request.getParameter("q");
-            boolean isMCP = false;
             if (query != null) {
                 query = StringUtilities.htmlSpecialChars(query);
-                if (query.equals(org.tinystruct.mcp.MCPSpecification.Endpoints.SSE)) {
-                    isMCP = true;
-                }
 
                 Method method = request.method();
                 Action.Mode mode = Action.Mode.fromName(method.name());
                 Object call = ApplicationManager.call(query, context, mode);
                 String sessionId = context.getId();
-                SSEPushManager pushManager = getAppropriatePushManager(isMCP);
+                Object pmAttr = context.getAttribute("sse.push.manager");
+                SSEPushManager pushManager = (pmAttr instanceof SSEPushManager)
+                        ? (SSEPushManager) pmAttr
+                        : SSEPushManager.getInstance();
                 response.setStatus(ResponseStatus.OK);
                 response.sendHeaders(-1);
                 pushManager.register(sessionId, response);
