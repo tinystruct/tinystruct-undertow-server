@@ -6,7 +6,7 @@
     <name>undertow server module</name>
     <groupId>org.tinystruct</groupId>
     <artifactId>tinystruct-undertow-server</artifactId>
-    <version>1.1.0</version>
+    <version>1.1.1</version>
     <description>A tinystruct-based module to enable Undertow server support.</description>
     <url>https://tinystruct.org</url>
     <licenses>
@@ -30,19 +30,19 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <undertow.version>2.4.2.Final</undertow.version>
-        <tinystruct.version>1.7.29</tinystruct.version>
-        <jupiter.version>6.1.1</jupiter.version>
+        <undertow.version>2.4.3.Final</undertow.version>
+        <tinystruct.version>1.7.35</tinystruct.version>
+        <jupiter.version>6.1.3</jupiter.version>
         <xnio.version>3.8.17.Final</xnio.version>
         <jboss-logging.version>3.6.3.Final</jboss-logging.version>
-        <maven-compiler-plugin.version>3.12.1</maven-compiler-plugin.version>
-        <maven-jar-plugin.version>3.3.0</maven-jar-plugin.version>
-        <maven-assembly-plugin.version>2.2-beta-5</maven-assembly-plugin.version>
-        <maven-source-plugin.version>2.2.1</maven-source-plugin.version>
-        <maven-javadoc-plugin.version>3.2.0</maven-javadoc-plugin.version>
-        <maven-gpg-plugin.version>1.6</maven-gpg-plugin.version>
-        <maven-dependency-plugin.version>2.8</maven-dependency-plugin.version>
-        <central-publishing-plugin.version>0.8.0</central-publishing-plugin.version>
+        <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
+        <maven-jar-plugin.version>3.5.1</maven-jar-plugin.version>
+        <maven-assembly-plugin.version>3.8.0</maven-assembly-plugin.version>
+        <maven-source-plugin.version>3.4.0</maven-source-plugin.version>
+        <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
+        <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
+        <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
+        <central-publishing-plugin.version>0.11.0</central-publishing-plugin.version>
     </properties>
     <dependencies>
         <dependency>
