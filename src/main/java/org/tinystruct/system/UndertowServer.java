@@ -234,6 +234,7 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
     private class DefaultUndertowHandler implements HttpHandler {
 
         private final Settings settings;
+        private volatile boolean staticDirWarned = false;
 
         private DefaultUndertowHandler(Settings settings) {
             this.settings = settings;
@@ -320,6 +321,11 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
 
         @Override
         public void handleRequest(HttpServerExchange exchange) {
+            // Move off the IO thread before doing any blocking work (static file I/O, application calls).
+            if (exchange.isInIoThread()) {
+                exchange.dispatch(this);
+                return;
+            }
             try {
                 String origin = exchange.getRequestHeaders().getFirst("Origin");
                 String allowOrigin = getAllowOrigin(origin);
@@ -391,10 +397,6 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                     }
                 }
 
-                if (exchange.isInIoThread()) {
-                    exchange.dispatch(this);
-                    return;
-                }
                 // Create TinyStruct Request and Response wrappers
                 UndertowRequest request = new UndertowRequest(exchange);
                 UndertowResponse response = new UndertowResponse(exchange);
@@ -423,7 +425,12 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
             } catch (Exception e) {
                 logger.log(Level.SEVERE, "Error processing request", e);
                 try {
-                    sendErrorResponse(exchange, 500, "Internal Server Error: " + e.getMessage());
+                    // Do not leak internal error details to clients outside development.
+                    String environment = settings.getOrDefault("system.environment", "production");
+                    String errorMessage = "development".equalsIgnoreCase(environment) && e.getMessage() != null
+                            ? "Internal Server Error: " + e.getMessage()
+                            : "Internal Server Error";
+                    sendErrorResponse(exchange, 500, errorMessage);
                 } catch (Exception ignored) {
                     // If we can't send an error, just log
                 }
@@ -434,8 +441,6 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
             String accept = exchange.getRequestHeaders().getFirst("Accept");
             return accept != null && accept.contains("text/event-stream");
         }
-
-
 
         private void handleSSE(UndertowRequest request, UndertowResponse response, Context context) throws IOException, ApplicationException {
             // Set SSE headers
@@ -472,44 +477,75 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
 
         private boolean tryServeStatic(HttpServerExchange exchange) {
             try {
-                String uri = exchange.getRequestURI();
-                String path = sanitizeUri(uri);
-                if (path == null) return false;
+                // getRequestPath() is already decoded and excludes the query string.
+                String uri = exchange.getRequestPath();
+                if (uri == null || uri.isEmpty() || uri.equals("/")) {
+                    return false;
+                }
 
-                String filepath = path;
-                int q = path.indexOf("?");
-                if (q >= 0) filepath = path.substring(0, q);
-
-                java.io.File file = new java.io.File(filepath);
-                if (!file.exists() || file.isHidden()) {
-                    if (filepath.endsWith("/favicon.ico")) {
-                        try (InputStream stream = Objects.requireNonNull(getClass().getResource("/favicon.ico")).openStream()) {
+                if ("/favicon.ico".equals(uri)) {
+                    Path resolvedFavicon = sanitizeUri(uri);
+                    if (resolvedFavicon != null && java.nio.file.Files.isRegularFile(resolvedFavicon)) {
+                        return sendStaticFile(exchange, resolvedFavicon);
+                    }
+                    try (InputStream stream = getClass().getResourceAsStream("/favicon.ico")) {
+                        if (stream != null) {
                             byte[] bytes = stream.readAllBytes();
                             exchange.getResponseHeaders().put(Headers.CONTENT_TYPE, "image/x-icon");
                             exchange.setStatusCode(200);
                             exchange.getResponseSender().send(ByteBuffer.wrap(bytes));
                             return true;
-                        } catch (Exception ignore) {
-                            return false;
                         }
+                    } catch (Exception ignore) {
                     }
                     return false;
                 }
 
-                if (!file.isFile()) return false;
+                // Reject path traversal, illegal characters, and hidden files with 403 Forbidden
+                if (isForbiddenPath(uri)) {
+                    logger.warning("Rejected forbidden file access attempt: " + uri);
+                    sendErrorResponse(exchange, 403, "This request is forbidden!");
+                    return true;
+                }
+
+                // Attempt to serve regular file from the configured static directory
+                Path resolved = sanitizeUri(uri);
+                if (resolved != null && java.nio.file.Files.isRegularFile(resolved)) {
+                    return sendStaticFile(exchange, resolved);
+                }
+
+                // Forbid any direct download of files that exist in the project root directory
+                if (isProjectRootFile(uri)) {
+                    logger.warning("Rejected attempt to download project root file: " + uri);
+                    sendErrorResponse(exchange, 403, "This request is forbidden!");
+                    return true;
+                }
+
+                return false;
+            } catch (Exception e) {
+                logger.log(Level.FINE, "Static serve miss: " + e.getMessage(), e);
+                return false;
+            }
+        }
+
+        private boolean sendStaticFile(HttpServerExchange exchange, Path resolved) throws IOException {
+            java.io.File file = resolved.toFile();
 
                 // If-Modified-Since support
                 String ifModifiedSince = exchange.getRequestHeaders().getFirst("If-Modified-Since");
                 if (ifModifiedSince != null && !ifModifiedSince.isEmpty()) {
-                    java.text.SimpleDateFormat df = new java.text.SimpleDateFormat(HTTP_DATE_FORMAT, java.util.Locale.US);
-                    df.setTimeZone(java.util.TimeZone.getTimeZone(HTTP_DATE_GMT_TIMEZONE));
-                    java.util.Date ims = df.parse(ifModifiedSince);
-                    long imsSeconds = ims.getTime() / 1000;
-                    long fileSeconds = file.lastModified() / 1000;
-                    if (imsSeconds == fileSeconds) {
-                        setDateHeader(exchange);
-                        exchange.setStatusCode(304);
-                        return true;
+                    try {
+                        java.text.SimpleDateFormat df = new java.text.SimpleDateFormat(HTTP_DATE_FORMAT, java.util.Locale.US);
+                        df.setTimeZone(java.util.TimeZone.getTimeZone(HTTP_DATE_GMT_TIMEZONE));
+                        java.util.Date ims = df.parse(ifModifiedSince);
+                        long imsSeconds = ims.getTime() / 1000;
+                        long fileSeconds = file.lastModified() / 1000;
+                        if (imsSeconds == fileSeconds) {
+                            setDateHeader(exchange);
+                            exchange.setStatusCode(304);
+                            return true;
+                        }
+                    } catch (Exception ignored) {
                     }
                 }
 
@@ -534,29 +570,112 @@ public class UndertowServer extends AbstractApplication implements Bootstrap {
                 exchange.getResponseHeaders().put(Headers.CONTENT_LENGTH, file.length());
 
                 exchange.setStatusCode(200);
-                try (InputStream in = new java.io.FileInputStream(file)) {
-                    byte[] buffer = new byte[8192];
-                    int bytesRead;
-                    while ((bytesRead = in.read(buffer)) != -1) {
-                        exchange.getResponseSender().send(ByteBuffer.wrap(buffer, 0, bytesRead));
-                    }
+                // Stream with blocking I/O (we are on a worker thread). Calling getResponseSender().send()
+                // repeatedly does not work: the first send ends the exchange.
+                exchange.startBlocking();
+                try (java.io.OutputStream out = exchange.getOutputStream()) {
+                    java.nio.file.Files.copy(resolved, out);
                 }
                 return true;
-            } catch (Exception e) {
-                logger.log(Level.FINE, "Static serve miss: " + e.getMessage(), e);
-                return false;
-            }
         }
 
-        private String sanitizeUri(String uri) throws java.io.UnsupportedEncodingException {
-            String decoded = java.net.URLDecoder.decode(uri, java.nio.charset.StandardCharsets.UTF_8);
-            if (decoded.isEmpty() || decoded.charAt(0) != '/') return null;
-            if (decoded.length() > 255) throw new IllegalArgumentException("Input too long");
-            decoded = decoded.replace('/', java.io.File.separatorChar);
-            decoded = decoded.replace("..", "");
-            if (decoded.contains(java.io.File.separator + '.') || decoded.contains('.' + java.io.File.separator) || decoded.charAt(0) == '.' || decoded.charAt(decoded.length() - 1) == '.')
+        private boolean isForbiddenPath(String decoded) {
+            if (decoded == null || decoded.isEmpty() || decoded.length() > 2048) {
+                return true;
+            }
+            if (decoded.indexOf('\0') >= 0) {
+                return true;
+            }
+            String relative = decoded.startsWith("/") ? decoded.substring(1) : decoded;
+            relative = relative.replace('\\', '/');
+            for (String segment : relative.split("/")) {
+                if (segment.equals("..") || segment.equals(".")) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private boolean isProjectRootFile(String decoded) {
+            if (decoded == null || decoded.isEmpty()) return false;
+            String relative = decoded.startsWith("/") ? decoded.substring(1) : decoded;
+            relative = relative.replace('\\', '/');
+            if (relative.isEmpty() || relative.indexOf(':') >= 0 || relative.indexOf('\0') >= 0) return false;
+            Path workDir = java.nio.file.Paths.get(System.getProperty("user.dir")).toAbsolutePath().normalize();
+            try {
+                Path candidate = workDir.resolve(relative).normalize();
+                if (candidate.startsWith(workDir) && !candidate.equals(workDir)) {
+                    return java.nio.file.Files.isRegularFile(candidate);
+                }
+            } catch (java.nio.file.InvalidPathException ignored) {
+            }
+            return false;
+        }
+
+        /**
+         * Resolves a decoded request path to a regular file inside the configured static directory
+         * ({@code server.static.dir}, default {@code static}), or returns {@code null}. The working
+         * directory itself is never exposed, so project sources and configuration cannot be downloaded.
+         */
+        private Path sanitizeUri(String decoded) {
+            if (decoded == null || decoded.isEmpty() || decoded.charAt(0) != '/' || decoded.length() > 2048) {
                 return null;
-            return System.getProperty("user.dir") + java.io.File.separator + decoded;
+            }
+            String relative = decoded.substring(1).replace('\\', '/');
+            // ':' covers drive letters and NTFS alternate data streams (file::$DATA)
+            if (relative.isEmpty() || relative.indexOf('\0') >= 0 || relative.indexOf(':') >= 0) {
+                return null;
+            }
+            Path workDir = java.nio.file.Paths.get(System.getProperty("user.dir")).toAbsolutePath().normalize();
+            String staticDirConfig = settings.get("server.static.dirs");
+            if (staticDirConfig == null || staticDirConfig.trim().isEmpty()) {
+                staticDirConfig = settings.getOrDefault("server.static.dir", "static");
+            }
+            String[] dirs = staticDirConfig.split("[,;]");
+            for (String dir : dirs) {
+                dir = dir.trim();
+                if (dir.isEmpty()) continue;
+                Path baseDir = workDir.resolve(dir).toAbsolutePath().normalize();
+                if (workDir.startsWith(baseDir)) {
+                    if (!staticDirWarned) {
+                        staticDirWarned = true;
+                        logger.warning("server.static.dir must be a sub-directory of the working directory; static file serving is disabled for: " + dir);
+                    }
+                    continue;
+                }
+                for (Path root : new Path[]{baseDir, java.nio.file.Paths.get(System.getProperty("user.dir")).toAbsolutePath().normalize()}) {
+                    Path requested;
+                    try {
+                        requested = root.resolve(relative).normalize();
+                    } catch (java.nio.file.InvalidPathException e) {
+                        continue;
+                    }
+                    if (!requested.startsWith(baseDir) || requested.equals(baseDir)) {
+                        continue;
+                    }
+                    boolean invalid = false;
+                    for (Path part : baseDir.relativize(requested)) {
+                        String name = part.toString();
+                        // Never serve hidden files or folders (.git, .env, ...), and reject Windows
+                        // trailing dot/space aliases ("secret.txt." resolves to "secret.txt").
+                        if (name.startsWith(".") || name.endsWith(".") || name.endsWith(" ")) {
+                            invalid = true;
+                            break;
+                        }
+                    }
+                    if (invalid) {
+                        continue;
+                    }
+                    // Resolve symlinks so a link inside the directory cannot point outside of it
+                    try {
+                        if (java.nio.file.Files.isRegularFile(requested) && requested.toRealPath().startsWith(baseDir.toRealPath())) {
+                            return requested;
+                        }
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+            return null;
         }
 
         private void setDateHeader(HttpServerExchange exchange) {
